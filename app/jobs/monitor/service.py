@@ -36,15 +36,25 @@ from app.scoring import (
     fundamentals_health_score,
     map_catalyst_strength,
 )
+from app.scoring.components import (
+    extension_check,
+    liquidity_component,
+    momentum_component,
+    technical_component,
+    volume_component,
+)
 from app.scoring.risk import RiskEngine
 from app.signals import SignalAction, SignalEvent, SignalInput, evaluate
 from app.signals.gates import DonchianInput, detect_squeeze, donchian_entry_gate
+from app.signals.trade_plan import build_trade_plan, grade_signal
 
 from . import persistence as persist
+from .live import build_live_session
 from .round_gates import (
     apply_breadth_cap,
     apply_correlation_gate,
     apply_exit_rules,
+    apply_plan_exits,
     apply_regime_gate,
     compute_regime,
 )
@@ -54,8 +64,6 @@ from .types import (
     SymbolState,
     enum_val,
     impact_rank,
-    liquidity_score,
-    momentum_score,
 )
 
 log = get_logger(__name__)
@@ -277,16 +285,24 @@ class MonitorService:
 
     @staticmethod
     def _today_vwap(bars: list) -> float | None:
-        """Session VWAP from today's 5m bars (latest ET date group)."""
+        """Session VWAP from today's 5m bars (latest ET date group).
+
+        Regular-session bars only once the market is open (standard VWAP);
+        before the open, the premarket VWAP is the reference instead.
+        """
         from app.core.market_calendar import group_by_et_day
         from app.indicators import session_vwap
+
+        from .live import _is_regular
 
         if not bars:
             return None
         by_day = group_by_et_day(bars)
         if not by_day:
             return None
-        return session_vwap(by_day[max(by_day)])
+        today = by_day[max(by_day)]
+        regular = [b for b in today if _is_regular(b.timestamp)]
+        return session_vwap(regular or today)
 
     @staticmethod
     def _returns_from_bars(bars_5m: list) -> list[float] | None:
@@ -347,16 +363,25 @@ class MonitorService:
         feed_max_lag = get_settings().feed.max_fetch_lag_ms
         feed_lag_stale = self.last_feed_lag_ms > feed_max_lag
 
-        bars = await provider.get_daily_bars(symbol, start=datetime.now(UTC) - timedelta(days=400))
+        daily, bars_5m = await asyncio.gather(
+            provider.get_daily_bars(symbol, start=datetime.now(UTC) - timedelta(days=400)),
+            self._fetch_intraday(symbol),
+        )
+        # Merge today's regular session into the (cached) daily history and
+        # measure the day change against the previous session close — also
+        # correct in premarket, when today's daily bar does not exist yet.
+        live = build_live_session(list(daily or []), bars_5m, price_f)
+        bars = live.bars
+        if price_f <= 0 and bars:
+            price_f = float(bars[-1].close)
         closes = np.array([float(b.close) for b in bars], dtype=float) if bars else np.array([])
         volumes = np.array([b.volume for b in bars], dtype=float) if bars else np.array([])
-        if len(closes) >= 2 and closes[-2]:
-            change_pct = float((closes[-1] - closes[-2]) / closes[-2] * 100)
+        change_pct = float(live.change_pct)
+        if live.phase == "premarket":
+            rvol = self.rvol.rvol_daily(live.premarket_volume, volumes)
         else:
-            change_pct = 0.0
-        rvol = self.rvol.rvol_daily(int(volumes[-1]) if len(volumes) else 0, volumes[:-1])
+            rvol = self.rvol.rvol_daily(int(volumes[-1]) if len(volumes) else 0, volumes[:-1])
 
-        bars_5m = await self._fetch_intraday(symbol)
         vwap_now = self._today_vwap(bars_5m)
         vwap_distance: float | None = None
         if vwap_now and vwap_now > 0:
@@ -375,6 +400,7 @@ class MonitorService:
             bars_5m=bars_5m,
             vwap_now=vwap_now,
             vwap_distance=vwap_distance,
+            live=live,
         )
 
     async def evaluate_symbol(self, symbol: str) -> tuple[SignalEvent, dict[str, Any]]:
@@ -416,8 +442,9 @@ class MonitorService:
         dollar_blocked, dollar_reason = self.dollar_rule.buy_blocked(symbol)
         dollar_pen = self.dollar_rule.score_penalty(symbol)
 
-        momentum = momentum_score(change_pct)
-        technical = None
+        live = md.live
+        highs_arr = np.array([float(b.high) for b in bars], dtype=float) if bars else np.array([])
+        lows_arr = np.array([float(b.low) for b in bars], dtype=float) if bars else np.array([])
         divergence: str | None = None
         stoch_cross_dir: str | None = None
         stoch_divergence: str | None = None
@@ -427,12 +454,28 @@ class MonitorService:
         atr_now: float | None = None
         atr_pct_value: float | None = None
         squeeze_active = False
+        if len(closes) >= 15 and bars:
+            from app.indicators import atr as _atr
+
+            try:
+                atr_vals = _atr(highs_arr, lows_arr, closes)
+                if not np.isnan(atr_vals[-1]) and closes[-1]:
+                    atr_now = float(atr_vals[-1])
+                    atr_pct_value = float(atr_now / float(closes[-1]) * 100)
+            except Exception:
+                atr_now = None
+
+        # Technical: composite trend/breakout/RSI-regime/MACD/coil score;
+        # divergences, stochastics and Wyckoff footprints adjust it below.
+        tech_view = technical_component(closes, highs_arr if bars else None, lows_arr)
+        technical: float | None = tech_view.score if tech_view is not None else None
         if len(closes) >= 15:
             from app.indicators import detect_divergence, rsi, stoch_cross, stochastic
 
             rsi_vals = rsi(closes, 14)
             rsi_last = float(rsi_vals[-1]) if not np.isnan(rsi_vals[-1]) else None
-            technical = float(rsi_vals[-1]) if not np.isnan(rsi_vals[-1]) else None
+            if technical is None and rsi_last is not None:
+                technical = min(rsi_last, 60.0)  # short history: capped RSI proxy
         if len(closes) >= 30:
             div = detect_divergence(closes, rsi_vals)
             if div["bearish"]:
@@ -442,9 +485,7 @@ class MonitorService:
                 divergence = "bullish"
                 technical = min(100.0, (technical if technical is not None else 50.0) + 10.0)
         if len(closes) >= 20 and bars:
-            highs = np.array([float(b.high) for b in bars], dtype=float)
-            lows = np.array([float(b.low) for b in bars], dtype=float)
-            stoch_k, stoch_d = stochastic(highs, lows, closes)
+            stoch_k, stoch_d = stochastic(highs_arr, lows_arr, closes)
             stoch_k_last = float(stoch_k[-1]) if not np.isnan(stoch_k[-1]) else None
             stoch_d_last = float(stoch_d[-1]) if not np.isnan(stoch_d[-1]) else None
             stoch_cross_dir = stoch_cross(stoch_k, stoch_d)
@@ -455,22 +496,20 @@ class MonitorService:
             elif stoch_div["bullish"] or stoch_cross_dir == "bullish":
                 stoch_divergence = "bullish"
                 technical = min(100.0, (technical if technical is not None else 50.0) + 5.0)
-        if len(closes) >= 15 and bars:
-            from app.indicators import atr as _atr
 
-            try:
-                atr_vals = _atr(
-                    np.array([float(b.high) for b in bars], dtype=float),
-                    np.array([float(b.low) for b in bars], dtype=float),
-                    closes,
-                )
-                if not np.isnan(atr_vals[-1]) and closes[-1]:
-                    atr_now = float(atr_vals[-1])
-                    atr_pct_value = float(atr_now / float(closes[-1]) * 100)
-            except Exception:
-                atr_now = None
-        dollar_volume = price_f * (float(volumes[-1]) if len(volumes) else 0)
-        liquidity = liquidity_score(spread)
+        roc_5 = (
+            float((closes[-1] / closes[-6] - 1) * 100)
+            if len(closes) >= 6 and closes[-6] > 0
+            else None
+        )
+        momentum = momentum_component(change_pct, atr_pct_value, roc_5, vwap_distance)
+        session_volume = (
+            float(live.session_volume)
+            if live is not None and live.session_volume
+            else (float(volumes[-1]) if len(volumes) else 0.0)
+        )
+        dollar_volume = price_f * session_volume
+        liquidity = liquidity_component(dollar_volume, spread)
 
         # Stealth accumulation (Wyckoff footprints) + climax guard.
         acc_summary: dict[str, Any] | None = None
@@ -507,7 +546,9 @@ class MonitorService:
         same_time_rvol: float | None = None
         rvol_source = "daily-proxy"
         freeze_decision = self.filings.get(symbol)
+        catalyst_checked = False
         if len(closes) >= 21 and bars:
+            catalyst_checked = self.news.news_provider is not None and rvol >= 1.5
             catalyst = await self._fetch_catalyst(symbol, rvol)
             if catalyst is not None:
                 same_time_rvol, rvol_source = await self._same_time_rvol(symbol, bars_5m)
@@ -554,8 +595,14 @@ class MonitorService:
             if same_time_rvol is not None:
                 rvol_source = st_src
         score_rvol = same_time_rvol if same_time_rvol is not None else rvol
+        if live is not None and live.phase == "premarket" and not live.premarket_volume:
+            rvol_source = "unavailable (feed sin volumen premarket)"
 
         cat_strength = map_catalyst_strength((catalyst or {}).get("impact") if catalyst else None)
+        if cat_strength is None and catalyst_checked:
+            cat_strength = "none"  # looked for news and found nothing material
+        float_rotation = session_volume / fund_float if fund_float and fund_float > 0 else None
+        vol_score = volume_component(score_rvol, float_rotation)
         fund_score = fundamentals_health_score(fundamentals)
         dq_score = data_quality_from_completeness(
             assessment.data_completeness,
@@ -571,6 +618,8 @@ class MonitorService:
             fundamentals_score=fund_score,
             data_quality_score=dq_score,
             risk_flags=assessment.flags,
+            volume_score=vol_score,
+            renormalize_unknown_catalyst=True,
         )
         # Squeeze annotation (no short side exists: momentum-long only).
         squeeze_note: str | None = None
@@ -656,6 +705,70 @@ class MonitorService:
         if markup_ready:
             event.reasons.append("base de acumulación + ruptura con volumen: posible markup")
             event.reasons.extend(f"  · {r}" for r in markup_reasons)
+        # Chase guard: a valid setup bought 1+ ATR above VWAP is how penny
+        # runners trap late buyers. Demote to HOLD and say where to look.
+        ext = extension_check(
+            price_f,
+            vwap_now,
+            atr_now,
+            rsi_last,
+            change_pct,
+            max_vwap_atr=monitor_cfg.extension_max_vwap_atr,
+            max_vwap_pct=monitor_cfg.extension_max_vwap_pct,
+            max_rsi=monitor_cfg.extension_max_rsi,
+        )
+        if event.action == SignalAction.BUY and ext.overextended:
+            if monitor_cfg.buy_block_overextended:
+                event.action = SignalAction.HOLD
+                pull = f" (VWAP ${vwap_now:.4g})" if vwap_now else ""
+                event.reasons = [
+                    "extendido, no perseguir: "
+                    + "; ".join(ext.reasons)
+                    + f" — esperar pullback{pull}"
+                ] + event.reasons
+            else:
+                event.reasons.append("aviso extensión: " + "; ".join(ext.reasons))
+
+        # Trade plan: structural stop, R-multiple targets, confluence grade.
+        plan = None
+        if event.action == SignalAction.BUY:
+            resistance = float(highs_arr[-21:-1].max()) if len(highs_arr) >= 21 else None
+            plan = build_trade_plan(
+                price_f,
+                atr=atr_now,
+                vwap=vwap_now,
+                day_low=live.day_low if live is not None else None,
+                opening_range_low=live.opening_range_low if live is not None else None,
+                premarket_high=live.premarket_high if live is not None else None,
+                resistance=resistance,
+                setup=event.setup,
+                min_stop_pct=monitor_cfg.plan_min_stop_pct,
+                max_stop_pct=monitor_cfg.plan_max_stop_pct,
+            )
+            if plan is not None:
+                trend_aligned = bool(
+                    tech_view
+                    and tech_view.facts.get("ema_9")
+                    and price_f > float(tech_view.facts["ema_9"]) > float(tech_view.facts["ema_20"])
+                )
+                grade_signal(
+                    plan,
+                    score=event.score,
+                    matched_setups=len(event.matched_setups),
+                    has_catalyst=catalyst is not None,
+                    trend_aligned=trend_aligned,
+                    min_rr=monitor_cfg.plan_min_rr,
+                )
+                if plan.reward_risk < 1.0:
+                    event.action = SignalAction.HOLD
+                    event.reasons = [
+                        f"resistencia ${plan.resistance:.4g} a menos de 1R: "
+                        f"R:R {plan.reward_risk:.1f} insuficiente"
+                    ] + event.reasons
+                    plan = None
+                else:
+                    event.reasons.insert(0, plan.describe())
+
         self.state[symbol] = SymbolState(
             score=event.score,
             above_vwap=(vwap_distance > 0 if vwap_distance is not None else None),
@@ -666,21 +779,22 @@ class MonitorService:
         order_template: dict[str, Any] | None = None
         if event.action == SignalAction.BUY:
             try:
-                from app.indicators import atr
+                today_5m = []
+                if bars_5m:
+                    from .live import _is_regular
 
-                atr_vals = atr(
-                    np.array([float(b.high) for b in bars]),
-                    np.array([float(b.low) for b in bars]),
-                    closes,
-                )
-                atr_now = float(atr_vals[-1])
+                    by_day = self._group_by_day(bars_5m)
+                    today_5m = [b for b in by_day[max(by_day)] if _is_regular(b.timestamp)]
+                recent_5m = [float(b.volume) for b in (today_5m or bars_5m or [])[-12:]]
                 sizing = self.sizer.compute(
                     SizingInput(
-                        equity=get_settings().sizing.paper_equity,
+                        equity=self.paper.equity or get_settings().sizing.paper_equity,
                         score=event.score,
-                        atr=atr_now,
+                        atr=atr_now or 0.0,
                         price=price_f,
-                        avg_vol_5m=float(volumes[-5:].mean()) if len(volumes) >= 5 else None,
+                        avg_vol_5m=(sum(recent_5m) / len(recent_5m)) if recent_5m else None,
+                        float_shares=fund_float,
+                        stop_distance=plan.risk_per_share if plan is not None else None,
                     )
                 )
                 cfg_exec = get_settings().execution
@@ -701,7 +815,12 @@ class MonitorService:
                     "venue": template.venue,
                     "instruction": template.to_manual_instruction(),
                     "sizing_caps": sizing.capped_by,
+                    "risk_dollars": sizing.risk_dollars,
+                    "notional": sizing.dollars,
                 }
+                if plan is not None:
+                    order_template["stop"] = round(plan.stop, 4)
+                    order_template["targets"] = [round(t, 4) for t in plan.targets]
             except Exception as exc:  # sizing must never break the loop
                 log.error("sizing_failed", symbol=symbol, error=str(exc))
         details = {
@@ -755,11 +874,38 @@ class MonitorService:
             "kill_switch": killed,
             "setup": event.setup,
             "matched_setups": list(event.matched_setups),
+            "trade_plan": plan.as_dict() if plan is not None else None,
+            "grade": plan.grade if plan is not None else None,
+            "overextended": ext.overextended,
+            "extension_reasons": ext.reasons,
+            "technical_facts": tech_view.facts if tech_view is not None else {},
+            "technical_reasons": tech_view.reasons if tech_view is not None else [],
+            "subscores": {
+                "momentum": momentum,
+                "volume": vol_score,
+                "technical": round(technical, 1) if technical is not None else None,
+                "liquidity": liquidity,
+                "fundamentals": fund_score,
+                "data_quality": dq_score,
+            },
+            "float_rotation": round(float_rotation, 3) if float_rotation is not None else None,
+            "session": {
+                "phase": live.phase if live is not None else None,
+                "prev_close": live.prev_close if live is not None else None,
+                "premarket_high": live.premarket_high if live is not None else None,
+                "premarket_volume": live.premarket_volume if live is not None else None,
+                "day_high": live.day_high if live is not None else None,
+                "day_low": live.day_low if live is not None else None,
+                "opening_range_high": live.opening_range_high if live is not None else None,
+                "opening_range_low": live.opening_range_low if live is not None else None,
+                "volume": int(session_volume),
+            },
         }
         return event, details
 
-    def _to_alert(self, event: SignalEvent) -> Alert:
+    def _to_alert(self, event: SignalEvent, grade: str | None = None) -> Alert:
         kind = "COMPRA" if event.action == SignalAction.BUY else "VENTA"
+        grade_bit = f" [grado {grade}]" if grade else ""
         return Alert(
             symbol=event.symbol,
             score_id=uuid4(),
@@ -770,7 +916,7 @@ class MonitorService:
             price=Decimal(str(event.price)),
             change_pct=0.0,
             message=f"🔔 POSIBLE {kind} (revisar): {event.symbol} @ ${event.price:.2f} "
-            f"[score {event.score}]\n"
+            f"[score {event.score}]{grade_bit}\n"
             + "\n".join(f"- {r}" for r in event.reasons)
             + "\nSeñal automática para revisión manual, no es recomendación.",
         )
@@ -852,7 +998,9 @@ class MonitorService:
                         event.action = SignalAction.HOLD
                         event.reasons = [f"circuito: {sym_ev.reason}"] + event.reasons
 
-        # ---- Position exits + breadth cap ----
+        # ---- Position exits (trade plan first, then config %) + breadth cap ----
+        if monitor_cfg.plan_exits_enabled:
+            apply_plan_exits(evaluated, self.paper)
         apply_exit_rules(evaluated, monitor_cfg, self.paper.position_pnl_pct)
         buys_capped = apply_breadth_cap(evaluated, monitor_cfg.max_buys_per_round)
 
@@ -866,6 +1014,7 @@ class MonitorService:
                     event.price,
                     shares=int(qty) if qty else None,
                     spread_pct=details.get("spread_pct"),
+                    plan=details.get("trade_plan"),
                 )
                 if opened is not None:
                     await self._store_position(opened)
@@ -891,7 +1040,7 @@ class MonitorService:
             if event.is_actionable:
                 key = f"{event.symbol}:{event.action.value}"
                 if self.alerts.should_send(key, event.score):
-                    alert = self._to_alert(event)
+                    alert = self._to_alert(event, details.get("grade"))
                     results = [await p.send(alert) for p in self.alerts.providers()]
                     sent = any(results)
                     if sent:
@@ -913,6 +1062,8 @@ class MonitorService:
                 providers=[p.name for p in self.alerts.providers()] if sent else [],
                 setup=event.setup,
                 matched_setups=list(event.matched_setups),
+                trade_plan=details.get("trade_plan") if event.action == SignalAction.BUY else None,
+                grade=details.get("grade") if event.action == SignalAction.BUY else None,
             )
             out.append(rec)
             self.events.appendleft(rec)
@@ -1032,6 +1183,8 @@ class MonitorService:
                 "vwap_distance_pct": e.vwap_distance_pct,
                 "setup": e.setup,
                 "matched_setups": list(e.matched_setups),
+                "trade_plan": e.trade_plan,
+                "grade": e.grade,
                 "timestamp": e.timestamp.isoformat(),
             }
             for e in list(self.events)[:limit]

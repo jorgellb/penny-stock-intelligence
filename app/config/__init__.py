@@ -131,6 +131,16 @@ class MonitorConfig(BaseSettings):
     radar_min_score: int = 55
     radar_min_rvol: float = 1.5
     radar_min_change_pct: float = 2.0
+    # Chase guard: demote BUYs too far above VWAP / with exhausted RSI.
+    buy_block_overextended: bool = True
+    extension_max_vwap_atr: float = 1.0
+    extension_max_vwap_pct: float = 15.0
+    extension_max_rsi: float = 88.0
+    # Trade plan (entry / structural stop / R-multiple targets)
+    plan_min_stop_pct: float = 3.0
+    plan_max_stop_pct: float = 12.0
+    plan_min_rr: float = 2.0
+    plan_exits_enabled: bool = True
 
 
 class SizingConfig(BaseSettings):
@@ -249,6 +259,10 @@ class ScoringPenalties(BaseSettings):
     no_recent_filings: int = 10
     insufficient_data: int = 20
     news_unverified: int = 5
+    # Low float is the fuel of penny runners, not a defect: its risk is
+    # handled by sizing (float participation cap) and plan stops.
+    low_float: int = 0
+    micro_float: int = 5
 
 
 class ScoringConfig(BaseSettings):

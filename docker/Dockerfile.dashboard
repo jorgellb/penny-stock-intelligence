@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -e ".[dashboard]"
 
 COPY dashboard/ ./dashboard/
+COPY .streamlit/ ./.streamlit/
 COPY config/ ./config/
 
 EXPOSE 8501

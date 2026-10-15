@@ -76,9 +76,7 @@ async def universe_scan(
     return await _get(client, f"/api/v1/universe?{params}")
 
 
-async def scanner_rankings(
-    client: httpx.AsyncClient, kind: str = "intraday"
-) -> dict:
+async def scanner_rankings(client: httpx.AsyncClient, kind: str = "intraday") -> dict:
     """Ranked monitor evaluations (run a monitor pass first)."""
     path = {
         "overall": "/api/v1/scanner",
@@ -125,11 +123,21 @@ async def stock(client: httpx.AsyncClient, symbol: str) -> dict:
     return await _get(client, f"/api/v1/stocks/{symbol.strip().upper()}")
 
 
-async def stock_history(
-    client: httpx.AsyncClient, symbol: str, days: int = 120
-) -> dict:
+async def stock_history(client: httpx.AsyncClient, symbol: str, days: int = 120) -> dict:
     """Daily OHLCV bars for charting (empty list + note when unavailable)."""
     return await _get(client, f"/api/v1/stocks/{symbol.strip().upper()}/history?days={days}")
+
+
+async def stock_intraday(client: httpx.AsyncClient, symbol: str, interval: str = "5m") -> dict:
+    """Latest session intraday bars with running VWAP (extended hours included)."""
+    return await _get(
+        client, f"/api/v1/stocks/{symbol.strip().upper()}/intraday?interval={interval}"
+    )
+
+
+async def monitor_paper_trades(client: httpx.AsyncClient, limit: int = 100) -> dict:
+    """Closed paper trades (persisted)."""
+    return await _get(client, f"/api/v1/monitor/paper/trades?limit={limit}")
 
 
 async def watchlists(client: httpx.AsyncClient, user_id: str = "default") -> list[dict]:
@@ -196,19 +204,27 @@ async def run_backtest(
     min_change_pct: float = 5.0,
     holding_days: int = 5,
     stop_pct: float = -8.0,
+    target_pct: float | None = None,
+    min_score: int = 0,
+    entry: str = "next_open",
 ) -> dict:
     """Historical rvol-momentum bundle (informational, never a forecast)."""
+    params: dict[str, object] = {
+        "symbols": symbols,
+        "days": days,
+        "min_rvol": min_rvol,
+        "min_change_pct": min_change_pct,
+        "holding_days": holding_days,
+        "stop_pct": stop_pct,
+        "min_score": min_score,
+        "entry": entry,
+    }
+    if target_pct:
+        params["target_pct"] = target_pct
     try:
         resp = await client.post(
             "/api/v1/backtest/run",
-            params={
-                "symbols": symbols,
-                "days": days,
-                "min_rvol": min_rvol,
-                "min_change_pct": min_change_pct,
-                "holding_days": holding_days,
-                "stop_pct": stop_pct,
-            },
+            params=params,  # type: ignore[arg-type]
         )
         resp.raise_for_status()
         return resp.json()

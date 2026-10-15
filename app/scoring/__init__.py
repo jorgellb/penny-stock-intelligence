@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from app.config import get_settings
 from app.domain.models import Fundamentals, RiskFlag, Score, ScoreBreakdown
+from app.scoring.components import volume_component
 
 
 def map_catalyst_strength(impact: str | None) -> str | None:
@@ -95,58 +96,44 @@ class ScoringEngine:
         liquidity_score: float | None = None,
         fundamentals_score: float | None = None,
         data_quality_score: float | None = None,
+        volume_score: float | None = None,
+        renormalize_unknown_catalyst: bool = False,
     ) -> ScoreBreakdown:
-        """Compute the raw score components."""
+        """Compute the raw score components.
+
+        Sub-scores are 0-100 and scaled by their weight (rounded, not
+        truncated). `volume_score` overrides the RVOL mapping when the
+        caller has richer context (float rotation). With
+        `renormalize_unknown_catalyst`, an *unknown* catalyst (no news
+        provider / not checked) does not cap the score at 80: the other
+        components are rescaled to the full 100. A checked-and-absent
+        catalyst ("none") still scores 0.
+        """
         breakdown = ScoreBreakdown()
 
-        # Momentum component (0-20)
-        if momentum_score is not None:
-            breakdown.momentum = min(
-                int(momentum_score * self.weights.momentum / 100),
-                self.weights.momentum,
-            )
+        def scaled(sub: float | None, weight: int) -> int:
+            if sub is None:
+                return 0
+            return int(min(max(round(sub * weight / 100), 0), weight))
 
-        # Volume component (0-20)
-        if rvol is not None:
-            # rvol of 2.0 = full score, rvol of 1.0 = half score
-            volume_pct = min(rvol / 2.0, 1.0)
-            breakdown.volume = int(volume_pct * self.weights.volume)
+        breakdown.momentum = scaled(momentum_score, self.weights.momentum)
 
-        # Catalyst component (0-20)
+        if volume_score is None and rvol is not None:
+            volume_score = volume_component(rvol)
+        breakdown.volume = scaled(volume_score, self.weights.volume)
+
         if catalyst_strength is not None:
-            catalyst_map = {"weak": 0.25, "moderate": 0.5, "strong": 1.0, "none": 0}
-            catalyst_pct = catalyst_map.get(catalyst_strength, 0)
-            breakdown.catalyst = int(catalyst_pct * self.weights.catalyst)
-
-        # Technical component (0-15)
-        if technical_score is not None:
-            breakdown.technical = min(
-                int(technical_score * self.weights.technical / 100),
-                self.weights.technical,
+            catalyst_map = {"weak": 25.0, "moderate": 55.0, "strong": 100.0, "none": 0.0}
+            breakdown.catalyst = scaled(
+                catalyst_map.get(catalyst_strength, 0.0), self.weights.catalyst
             )
 
-        # Liquidity component (0-10)
-        if liquidity_score is not None:
-            breakdown.liquidity = min(
-                int(liquidity_score * self.weights.liquidity / 100),
-                self.weights.liquidity,
-            )
+        breakdown.technical = scaled(technical_score, self.weights.technical)
+        breakdown.liquidity = scaled(liquidity_score, self.weights.liquidity)
+        breakdown.fundamentals = scaled(fundamentals_score, self.weights.fundamentals)
+        breakdown.data_quality = scaled(data_quality_score, self.weights.data_quality)
 
-        # Fundamentals component (0-10)
-        if fundamentals_score is not None:
-            breakdown.fundamentals = min(
-                int(fundamentals_score * self.weights.fundamentals / 100),
-                self.weights.fundamentals,
-            )
-
-        # Data quality component (0-5)
-        if data_quality_score is not None:
-            breakdown.data_quality = min(
-                int(data_quality_score * self.weights.data_quality / 100),
-                self.weights.data_quality,
-            )
-
-        breakdown.raw_score = sum(
+        raw = sum(
             [
                 breakdown.momentum,
                 breakdown.volume,
@@ -157,6 +144,11 @@ class ScoringEngine:
                 breakdown.data_quality,
             ]
         )
+        if catalyst_strength is None and renormalize_unknown_catalyst:
+            available = 100 - self.weights.catalyst
+            if available > 0:
+                raw = int(round(raw * 100 / available))
+        breakdown.raw_score = min(raw, 100)
 
         return breakdown
 
@@ -186,8 +178,8 @@ class ScoringEngine:
             "NO_RECENT_FILINGS": self.penalties.no_recent_filings,
             "INSUFFICIENT_DATA": self.penalties.insufficient_data,
             "NEWS_UNVERIFIED": self.penalties.news_unverified,
-            "LOW_FLOAT": max(5, self.penalties.low_liquidity // 2),
-            "MICRO_FLOAT": self.penalties.low_liquidity,
+            "LOW_FLOAT": self.penalties.low_float,
+            "MICRO_FLOAT": self.penalties.micro_float,
         }
 
         for flag in risk_flags:
@@ -247,6 +239,8 @@ class ScoringEngine:
         fundamentals_score: float | None = None,
         data_quality_score: float | None = None,
         risk_flags: list[RiskFlag] | None = None,
+        volume_score: float | None = None,
+        renormalize_unknown_catalyst: bool = False,
     ) -> Score:
         """Full scoring pipeline."""
         breakdown = self.compute_raw_score(
@@ -257,6 +251,8 @@ class ScoringEngine:
             liquidity_score=liquidity_score,
             fundamentals_score=fundamentals_score,
             data_quality_score=data_quality_score,
+            volume_score=volume_score,
+            renormalize_unknown_catalyst=renormalize_unknown_catalyst,
         )
         flags = risk_flags or []
         return self.compute_final_score(breakdown, flags)

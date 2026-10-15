@@ -44,6 +44,8 @@ class MonitoredEvent:
     providers: list[str] = field(default_factory=list)
     setup: str | None = None
     matched_setups: list[str] = field(default_factory=list)
+    trade_plan: dict[str, Any] | None = None
+    grade: str | None = None
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -68,6 +70,7 @@ class MarketData:
     bars_5m: list
     vwap_now: float | None
     vwap_distance: float | None
+    live: Any = None  # LiveSession (session phase, prev close, HOD/LOD, OR, premarket)
 
 
 def momentum_score(change_pct: float) -> float:

@@ -19,6 +19,8 @@ class SizingInput:
     price: float
     avg_vol_5m: float | None = None
     float_shares: float | None = None
+    # Distance entry→stop from the trade plan; overrides atr_multiple*ATR.
+    stop_distance: float | None = None
 
 
 @dataclass
@@ -56,7 +58,8 @@ class PositionSizer:
 
     def compute(self, inp: SizingInput) -> SizingResult:
         capped: list[str] = []
-        if inp.equity <= 0 or inp.atr <= 0 or inp.price <= 0:
+        has_stop = inp.stop_distance is not None and inp.stop_distance > 0
+        if inp.equity <= 0 or inp.price <= 0 or (inp.atr <= 0 and not has_stop):
             return SizingResult(
                 shares=0, dollars=0.0, risk_dollars=0.0, capped_by=["invalid_input"]
             )
@@ -66,7 +69,11 @@ class PositionSizer:
             else self.risk_per_trade_pct
         )
         risk_dollars = inp.equity * pct
-        stop_distance = self.atr_multiple * inp.atr
+        stop_distance = (
+            float(inp.stop_distance)  # type: ignore[arg-type]
+            if has_stop
+            else self.atr_multiple * inp.atr
+        )
         shares = int(risk_dollars / stop_distance)
         if inp.avg_vol_5m and inp.avg_vol_5m > 0:
             max_shares = int(inp.avg_vol_5m * self.max_volume_participation)

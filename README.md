@@ -166,6 +166,34 @@ Final Score = max(0, Base Score - Risk Penalties)
 
 **Scores are ranking metrics, not probability forecasts.**
 
+Each component is a composite 0-100 sub-score (ATR-normalized momentum,
+log-scaled RVOL + float rotation, trend/breakout/RSI-regime/MACD technical,
+dollar-volume liquidity). An unknown catalyst re-normalizes the score
+instead of capping it at 80. See `docs/SCORING.md`.
+
+## Trade Plans
+
+Every BUY ships with a plan for manual execution: entry, structural stop
+(VWAP / opening-range low / premarket high / day low, 3-12%), 1R/2R/3R
+targets, reward:risk against the 20-day high, an A/B/C confluence grade and
+a risk-based share size. BUYs more than one daily ATR above VWAP are
+demoted ("no perseguir"). Paper positions follow the plan: stop,
+break-even after T1, exit at T2.
+
+## Dashboard (Night Tape)
+
+Dark trading-terminal UI at http://localhost:8501:
+
+- **Command** — floor KPIs, actionable signal cards with trade-plan ladder,
+  paper positions, live tape; optional 30s auto-refresh.
+- **Scanner** — run a monitor round over a list.
+- **Ticker desk** — 5m intraday chart with VWAP, premarket/opening-range
+  levels and plan lines; daily chart with EMA 9/20/50, Bollinger, RSI,
+  MACD; score anatomy and sub-scores.
+- **Backtest** — equity curve with drawdown, return distribution, average
+  return by score band, trade log.
+- Radar, Rankings, Watchlists, Journal (paper trades + alerts), Settings.
+
 ## Stock Lists + Realtime Monitor
 
 Keep your own persistent stock lists and watch them in realtime. The
@@ -201,6 +229,9 @@ See `docs/MONITORING.md` for rules, thresholds and endpoints.
 | `GET /api/v1/stocks/{symbol}/filings` | SEC filings |
 | `GET /api/v1/stocks/{symbol}/risks` | Risk flags |
 | `GET /api/v1/stocks/{symbol}/score` | Score with explanation |
+| `GET /api/v1/stocks/{symbol}/history` | Daily OHLCV (today merged from intraday) |
+| `GET /api/v1/stocks/{symbol}/intraday` | Latest session 5m bars + running VWAP |
+| `POST /api/v1/backtest/run` | Historical bundle (next-open fills, equity curve, calibration) |
 | `GET /api/v1/alerts` | Alert history |
 | `GET /api/v1/watchlists` | Stock lists |
 | `POST /api/v1/watchlists/{name}/symbols?symbol=` | Add to list |

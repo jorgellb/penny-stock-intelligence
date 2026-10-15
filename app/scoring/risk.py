@@ -156,7 +156,7 @@ class RiskEngine:
                         detected_at=now,
                         source=DataProvider.YFINANCE,
                         explanation=f"Micro float {float_val:,} ≤ {micro:,}",
-                        score_penalty=self._penalties.low_liquidity,
+                        score_penalty=self._penalties.micro_float,
                     )
                 )
             elif float_val <= low:
@@ -168,7 +168,7 @@ class RiskEngine:
                         detected_at=now,
                         source=DataProvider.YFINANCE,
                         explanation=f"Low float {float_val:,} ≤ {low:,}",
-                        score_penalty=max(5, self._penalties.low_liquidity // 2),
+                        score_penalty=self._penalties.low_float,
                     )
                 )
 

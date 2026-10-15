@@ -135,3 +135,25 @@ This does NOT convert to "probability of winning".
 - Penny stocks have execution challenges
 - Past performance does not guarantee future results
 - This is a research tool, not a trading system
+
+## Historical bundle execution model (`app/backtesting/history.py`)
+
+- **Entry** `next_open` (default): the signal needs the close of day T, so
+  the fill is the open of T+1, gap included. `close` keeps the legacy
+  close-of-T fill (optimistic).
+- **Stops / targets** are checked against each bar's low/high. A gap
+  through the level fills at the open (worse than the level), never at the
+  level itself.
+- **Costs**: commission + slippage on both sides via `apply_costs`.
+- **Point-in-time score**: each signal carries the momentum/volume/technical
+  score computed on bars ≤ T, so `calibration` shows the average return per
+  score band.
+- **Metrics**: win rate, expectancy, profit factor, payoff ratio, per-trade
+  Sharpe, compounded return and equity drawdown risking
+  `position_fraction` (20%) of equity per trade, plus walk-forward folds.
+
+A sanity run on 14 liquid sub-$5 names (250 days, RVOL ≥ 2, day ≥ +5%,
+next-open entry, -8% stop, +20% target, 5-day hold) produced 29 trades
+with a 17% win rate and negative expectancy: buying the open after a
+spike day mostly buys the top. That is why live BUYs require intraday
+confirmation (VWAP hold, same-time RVOL) and pass the chase guard.

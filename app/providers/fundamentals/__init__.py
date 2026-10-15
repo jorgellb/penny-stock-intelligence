@@ -2,14 +2,37 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timezone
+import asyncio
+import time
+from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Dict, List, Optional
+from typing import Any
 
 from app.domain.models import DataProvider, Fundamentals, ShareStatistics
 
 
+def _fund_ttl() -> float:
+    try:
+        from app.config import get_settings
+
+        return float(get_settings().providers.fundamentals.cache_ttl_seconds)
+    except Exception:
+        return 3600.0
+
+
 class YFinanceFundamentalsProvider:
+    """yfinance `.info` fundamentals.
+
+    `.info` is slow (~1s) and blocking: it runs in a worker thread and is
+    cached per symbol (fundamentals change quarterly, not per minute).
+    Failures are cached briefly too so a dead symbol is not hammered.
+    """
+
+    _NEG_TTL = 300.0
+
+    def __init__(self) -> None:
+        self._cache: dict[str, tuple[float, Fundamentals | None]] = {}
+
     @property
     def name(self) -> DataProvider:
         return DataProvider.YFINANCE
@@ -29,11 +52,31 @@ class YFinanceFundamentalsProvider:
             return False
 
     async def get_fundamentals(self, symbol: str, period_type: str = "ttm") -> Fundamentals | None:
+        sym = symbol.upper()
+        cache = getattr(self, "_cache", None)
+        if cache is None:
+            cache = self._cache = {}
+        hit = cache.get(sym)
+        if hit is not None:
+            ts, cached = hit
+            ttl = _fund_ttl() if cached is not None else self._NEG_TTL
+            if time.monotonic() - ts <= ttl:
+                return cached
+        result = await self._fetch_fundamentals(sym, period_type)
+        cache[sym] = (time.monotonic(), result)
+        return result
+
+    async def _fetch_fundamentals(self, symbol: str, period_type: str) -> Fundamentals | None:
         try:
             import yfinance
 
-            t = yfinance.Ticker(symbol)
-            info = t.info or {}
+            info: dict[str, Any] = await asyncio.to_thread(
+                lambda: yfinance.Ticker(symbol).info or {}
+            )
+            if not info or (
+                info.get("marketCap") is None and info.get("sharesOutstanding") is None
+            ):
+                return None
             return Fundamentals(
                 symbol=symbol,
                 period_end=datetime.now(UTC),

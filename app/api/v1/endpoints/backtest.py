@@ -21,6 +21,9 @@ async def run_backtest(
     min_change_pct: float = Query(5.0, ge=0.0),
     holding_days: int = Query(5, ge=1, le=60),
     stop_pct: float = Query(-8.0, le=0.0),
+    target_pct: float | None = Query(None, gt=0.0),
+    min_score: int = Query(0, ge=0, le=100),
+    entry: str = Query("next_open", pattern="^(next_open|close)$"),
 ) -> dict[str, Any]:
     """Run the historical bundle over symbols (daily bars, yfinance)."""
     from app.backtesting import BacktestConfig
@@ -41,6 +44,9 @@ async def run_backtest(
             min_change_pct=min_change_pct,
             holding_days=holding_days,
             stop_pct=stop_pct,
+            target_pct=target_pct,
+            min_score=min_score,
+            entry=entry,
         ),
         costs=BacktestConfig(
             commission_pct=bt.default_commission_pct,
@@ -55,6 +61,8 @@ async def run_backtest(
         "skipped": result.skipped,
         "metrics": result.metrics,
         "walk_forward": result.walk_forward,
+        "equity_curve": result.equity_curve,
+        "calibration": result.calibration,
         "trades": [
             {
                 "symbol": t.symbol,
@@ -63,6 +71,10 @@ async def run_backtest(
                 "entry_price": t.entry_price,
                 "exit_price": t.exit_price,
                 "return_pct": t.return_pct,
+                "score": t.score_at_entry,
+                "exit_reason": result.exit_reasons.get(
+                    f"{t.symbol}:{t.entry_date.isoformat()}" if t.entry_date else ""
+                ),
             }
             for t in result.trades
         ],
