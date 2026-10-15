@@ -47,7 +47,7 @@ class OpenAIProvider(ProviderProtocol):
 
     async def health_check(self) -> bool:
         try:
-            from openai import AsyncOpenAI  # type: ignore[import-not-found]
+            from openai import AsyncOpenAI
 
             client = AsyncOpenAI()
             await client.chat.completions.create(

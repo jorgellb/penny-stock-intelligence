@@ -20,7 +20,7 @@ class YFinanceFundamentalsProvider:
 
     async def health_check(self) -> bool:
         try:
-            import yfinance  # type: ignore[import-not-found]
+            import yfinance
 
             t = yfinance.Ticker("AAPL")
             _ = t.info

@@ -91,7 +91,7 @@ class YFinanceMarketDataProvider(BaseMarketDataProvider):
 
     async def health_check(self) -> bool:
         try:
-            import yfinance  # type: ignore[import-not-found]
+            import yfinance
 
             ticker = yfinance.Ticker("AAPL")
             _ = ticker.history(period="1d")

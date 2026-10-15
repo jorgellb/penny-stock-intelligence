@@ -391,7 +391,7 @@ def _run_job_isolated(name: str) -> dict:
 
 
 def run_scheduler() -> None:
-    from apscheduler.schedulers.blocking import BlockingScheduler  # type: ignore[import-not-found]
+    from apscheduler.schedulers.blocking import BlockingScheduler
 
     from app.config import get_settings
 

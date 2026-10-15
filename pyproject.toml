@@ -84,6 +84,10 @@ no_implicit_optional = true
 strict_optional = true
 enable_error_code = ["unused-ignore", "attr-defined"]
 
+[[tool.mypy.overrides]]
+module = ["yfinance.*", "apscheduler.*", "redis.*", "uvicorn.*", "openai.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

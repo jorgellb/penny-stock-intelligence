@@ -137,7 +137,7 @@ def detect_abnormal_volume(
     rvol = current_volume / mean_vol if mean_vol > 0 else 0.0
 
     return {
-        "abnormal": abs(z_score) >= z_threshold,
+        "abnormal": bool(abs(z_score) >= z_threshold),
         "z_score": z_score,
         "rvol": rvol,
     }
@@ -163,6 +163,6 @@ def detect_abnormal_price_move(
     z_score = (current_change_pct - mean_change) / std_change
 
     return {
-        "abnormal": abs(z_score) >= z_threshold,
+        "abnormal": bool(abs(z_score) >= z_threshold),
         "z_score": z_score,
     }
