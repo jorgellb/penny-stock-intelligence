@@ -225,10 +225,49 @@ def test_history_endpoint_with_stubbed_provider(
             )
         ]
 
+    async def _no_intraday(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return []
+
     monkeypatch.setattr(provider, "get_daily_bars", _bars)
+    monkeypatch.setattr(provider, "get_bars", _no_intraday)
     monkeypatch.setattr(stocks_mod, "_bars_provider", lambda: provider)
     body = client.get("/api/v1/stocks/ABCD/history?days=30").json()
     assert body["symbol"] == "ABCD" and body["count"] == 1
     bar = body["bars"][0]
     assert bar["close"] == 1.05 and bar["volume"] == 500_000
     assert client.get("/api/v1/stocks/%20/history?days=30").status_code in (400, 404)
+
+
+def test_history_merges_live_session_from_intraday(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cached daily history + today's intraday bars -> today's candle appended."""
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    from app.domain.models import Bar, DailyBar
+    from app.providers.market_data import MockMarketDataProvider
+
+    provider = MockMarketDataProvider()
+
+    async def _daily(symbol, start, **kwargs):  # type: ignore[no-untyped-def]
+        return [
+            DailyBar(symbol=symbol, date=datetime(2026, 9, 17), open=Decimal("1.0"),
+                     high=Decimal("1.0"), low=Decimal("1.0"), close=Decimal("1.0"),
+                     volume=100, provider=provider.name)
+        ]  # fmt: skip
+
+    async def _intraday(*args, **kwargs):  # type: ignore[no-untyped-def]
+        ts = datetime(2026, 9, 18, 14, 0, tzinfo=UTC)  # 10:00 ET
+        return [
+            Bar(symbol="ABCD", timestamp=ts, open=Decimal("1.1"), high=Decimal("1.3"),
+                low=Decimal("1.1"), close=Decimal("1.25"), volume=5000,
+                provider=provider.name, timeframe="5m")
+        ]  # fmt: skip
+
+    monkeypatch.setattr(provider, "get_daily_bars", _daily)
+    monkeypatch.setattr(provider, "get_bars", _intraday)
+    monkeypatch.setattr(stocks_mod, "_bars_provider", lambda: provider)
+    body = client.get("/api/v1/stocks/ABCD/history?days=30").json()
+    assert body["count"] == 2
+    assert body["bars"][-1]["close"] == 1.25 and body["bars"][-1]["high"] == 1.3

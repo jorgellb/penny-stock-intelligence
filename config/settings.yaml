@@ -100,6 +100,16 @@ monitor:
   radar_min_score: 55
   radar_min_rvol: 1.5
   radar_min_change_pct: 2.0
+  # --- Chase guard: demote BUYs too far above VWAP / exhausted RSI ---
+  buy_block_overextended: true
+  extension_max_vwap_atr: 1.0     # price - VWAP > 1 daily ATR = chasing
+  extension_max_vwap_pct: 15.0    # fallback when ATR is unknown
+  extension_max_rsi: 88.0
+  # --- Trade plan: structural stop, 1R/2R/3R targets, A/B/C grade ---
+  plan_min_stop_pct: 3.0          # tighter structure = noise, use ATR instead
+  plan_max_stop_pct: 12.0         # never carry wider risk than this
+  plan_min_rr: 2.0                # grade threshold (R:R < 1 vs resistance = no BUY)
+  plan_exits_enabled: true        # paper: stop -> break-even after T1 -> exit at T2
 
 sizing:
   risk_per_trade_pct: 0.005
@@ -187,6 +197,8 @@ scoring:
     no_recent_filings: 10
     insufficient_data: 20
     news_unverified: 5
+    low_float: 0      # low float fuels runners; risk handled by sizing + stops
+    micro_float: 5
 
 providers:
   market_data:

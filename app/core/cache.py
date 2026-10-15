@@ -14,7 +14,7 @@ class Cache:
         self._redis = None
         if redis_url:
             try:
-                import redis  # type: ignore[import-not-found]
+                import redis
 
                 self._redis = redis.from_url(redis_url, socket_connect_timeout=2)
             except Exception:

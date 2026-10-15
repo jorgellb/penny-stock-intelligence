@@ -167,9 +167,7 @@ async def test_data_cleanup_retention(tmp_path, monkeypatch: pytest.MonkeyPatch)
     await db.close()
 
 
-def test_scheduler_job_disposes_engine_per_loop(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_scheduler_job_disposes_engine_per_loop(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Each scheduler run gets a fresh loop: engine must be disposed
     inside it, or pooled asyncpg connections poison the next run."""
     db = _db(tmp_path)

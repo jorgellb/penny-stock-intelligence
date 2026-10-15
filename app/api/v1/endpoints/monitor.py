@@ -52,6 +52,14 @@ async def monitor_run(
                 "reasons": e.reasons,
                 "sent": e.sent,
                 "order_template": e.order_template,
+                "trade_plan": e.trade_plan,
+                "grade": e.grade,
+                "change_pct": e.change_pct,
+                "rvol": e.rvol,
+                "dollar_volume": e.dollar_volume,
+                "vwap_distance_pct": e.vwap_distance_pct,
+                "risk_flags": e.risk_flags,
+                "catalyst_summary": e.catalyst_summary,
                 "timestamp": e.timestamp.isoformat(),
             }
             for e in results

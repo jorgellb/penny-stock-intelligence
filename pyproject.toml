@@ -68,6 +68,7 @@ ignore = ["ARG001", "ARG002", "TRY003", "PTH123", "SIM102", "UP035", "UP042", "B
 "__init__.py" = ["F401"]
 "app/providers/ai/__init__.py" = ["E501"]
 "tests/unit/test_listings.py" = ["E501"]
+"dashboard/theme.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -114,3 +115,8 @@ requires = ["setuptools>=69.0", "wheel"]
 build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["app*", "dashboard*"]
+
+[[tool.mypy.overrides]]
+# Third-party packages without type stubs (optional at runtime).
+module = ["yfinance.*", "apscheduler.*", "redis.*", "openai.*", "uvicorn.*", "streamlit.*", "plotly.*"]
+ignore_missing_imports = true

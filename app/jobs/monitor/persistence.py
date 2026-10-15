@@ -40,8 +40,7 @@ async def persist_events(events: list[MonitoredEvent]) -> int:
                     score=e.score,
                     change_pct=e.change_pct,
                     message=f"POSIBLE {e.action.upper()} (revisar): {e.symbol} @ "
-                    f"${e.price:.2f} [score {e.score}]\n"
-                    + "\n".join(f"- {r}" for r in e.reasons),
+                    f"${e.price:.2f} [score {e.score}]\n" + "\n".join(f"- {r}" for r in e.reasons),
                     risk_flags=e.risk_flags,
                     reasons=e.reasons,
                     catalyst_summary=e.catalyst_summary,

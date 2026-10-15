@@ -595,6 +595,8 @@ class MonitorService:
             if same_time_rvol is not None:
                 rvol_source = st_src
         score_rvol = same_time_rvol if same_time_rvol is not None else rvol
+        if live is not None and live.phase == "premarket" and not live.premarket_volume:
+            rvol_source = "unavailable (feed sin volumen premarket)"
 
         cat_strength = map_catalyst_strength((catalyst or {}).get("impact") if catalyst else None)
         if cat_strength is None and catalyst_checked:

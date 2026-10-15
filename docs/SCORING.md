@@ -39,6 +39,22 @@ The scoring engine produces deterministic, explainable scores for each stock in 
 | NO_RECENT_FILINGS | 10 | Low |
 | INSUFFICIENT_DATA | 20 | Low |
 | NEWS_UNVERIFIED | 5 | Low |
+| MICRO_FLOAT | 5 | Low |
+| LOW_FLOAT | 0 | Info (low float fuels runners; risk is handled by sizing and stops) |
+
+### How each sub-score is built (0-100, then scaled by its weight)
+
+All sub-scores live in `app/scoring/components.py` (pure, unit-tested).
+
+| Component | Inputs | Mapping |
+|-----------|--------|---------|
+| Momentum | day change, daily ATR %, 5-day ROC, VWAP distance | Day move measured in ATR units (2 ATR = 65 pts), +15 for 5-day drift, +20 when holding above VWAP. A +8% day on a stock that moves 20%/day is noise; on one that moves 3%/day it is a real move. |
+| Volume | same-time-of-day RVOL (daily proxy fallback), float rotation | Log-scaled: RVOL 1x = 0, 2x ≈ 30, 5x ≈ 70, 10x+ = 100. Session volume / float adds up to +15. The old mapping saturated at 2x, so a sleepy 2x name tied a 15x runner. |
+| Technical | daily OHLC | Trend structure (price > EMA9 > EMA20, > EMA50, EMA20 rising: 30), proximity to the 20d/52w high (25), RSI regime (55-75 best, > 85 penalized as exhaustion: 20), MACD impulse (15), Bollinger-width coil (10). Divergences, stochastics and Wyckoff footprints adjust it afterwards. The old version used the raw RSI value, so RSI 95 earned the maximum. |
+| Liquidity | session dollar volume, spread | Log-scaled dollar volume ($1M ≈ 45, $5M ≈ 80, $20M+ = 100) × spread factor. Unknown spread is neutral (0.9×), never a free pass. |
+| Catalyst | AI / heuristic news classification | strong 100, moderate 55, weak 25, none 0. **Unknown** (no news provider, or not checked) re-normalizes the other components to 100 instead of silently capping every score at 80. |
+
+Sub-scores are rounded (not truncated) when scaled by weight.
 
 ## Score Calculation
 
@@ -97,3 +113,28 @@ Every score is reproducible via `ScoreBreakdown` which stores all component valu
 - Scores are **ranking metrics**, not probability forecasts
 - The scoring model uses configurable weights, not ML predictions
 - AI is only used for feature extraction (news classification), NOT for scoring
+
+## From score to action
+
+A score alone never produces a BUY. After a setup matches (see
+`app/signals/setups.py`) the monitor applies, in order:
+
+1. **Hard vetoes** — halt, stale data, dilution freeze, $1 rule, circuit breakers.
+2. **Chase guard** (`buy_block_overextended`) — price more than
+   `extension_max_vwap_atr` daily ATRs above VWAP, RSI above
+   `extension_max_rsi`, or a > 150% day demotes the BUY to HOLD with
+   "esperar pullback a VWAP".
+3. **Trade plan** (`app/signals/trade_plan.py`) — the stop is the tightest
+   structural level (VWAP, opening-range low, premarket high for gap plays,
+   day low) at least `plan_min_stop_pct` below entry, falling back to one
+   daily ATR and clamped at `plan_max_stop_pct`. Targets are 1R/2R/3R. If
+   the 20-day high caps the reward below 1R, the BUY is dropped.
+4. **Grade A/B/C** — confluence of score (≥ 80 / ≥ 70), ≥ 2 matched setups,
+   catalyst, aligned trend and R:R ≥ `plan_min_rr`.
+5. **Sizing** — `risk_per_trade_pct` of paper equity divided by the plan's
+   stop distance, capped by 5% of the average *5-minute* volume of the
+   session, 10% of float and a dollar cap per score band.
+6. **Round gates** — market regime, correlation clones, breadth cap.
+
+Paper positions opened from a plan are managed by it: stop, break-even
+after T1, exit at T2 (`plan_exits_enabled`).

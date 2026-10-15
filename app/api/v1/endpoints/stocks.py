@@ -92,6 +92,15 @@ def _snapshot(symbol: str, event: Any, details: dict[str, Any]) -> dict[str, Any
             "kind": details.get("feed_kind"),
             "lag_ms": details.get("feed_lag_ms"),
         },
+        "setup": details.get("setup"),
+        "matched_setups": details.get("matched_setups", []),
+        "trade_plan": details.get("trade_plan"),
+        "grade": details.get("grade"),
+        "subscores": details.get("subscores"),
+        "session": details.get("session"),
+        "overextended": details.get("overextended"),
+        "extension_reasons": details.get("extension_reasons", []),
+        "float_rotation": details.get("float_rotation"),
         "evaluated_at": datetime.now(UTC).isoformat(),
     }
 
@@ -141,6 +150,8 @@ def _technical(details: dict[str, Any]) -> dict[str, Any]:
         "accumulation": details.get("accumulation"),
         "climax": details.get("climax"),
         "markup_ready": details.get("markup_ready"),
+        "facts": details.get("technical_facts", {}),
+        "technical_reasons": details.get("technical_reasons", []),
     }
 
 
@@ -263,19 +274,29 @@ async def get_history(
     if not sym:
         raise HTTPException(status_code=400, detail="empty symbol")
     start = datetime.now(UTC) - timedelta(days=days)
+    provider = _bars_provider()
     try:
-        bars = await asyncio.wait_for(
-            _bars_provider().get_daily_bars(sym, start=start), timeout=25
-        )
+        bars = await asyncio.wait_for(provider.get_daily_bars(sym, start=start), timeout=25)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"history failed: {exc}") from exc
+    # Daily history is cached; rebuild today's candle from intraday bars so
+    # the chart shows the live session (same merge the monitor uses).
+    if bars and hasattr(provider, "get_bars"):
+        try:
+            from app.jobs.monitor.live import build_live_session
+
+            intraday = await asyncio.wait_for(
+                provider.get_bars(sym, "5m", start=datetime.now(UTC) - timedelta(days=5)),
+                timeout=15,
+            )
+            bars = build_live_session(list(bars), list(intraday or []), 0.0).bars
+        except Exception:
+            pass  # fail-soft: plain daily history is still correct up to yesterday
     out = []
     for b in bars or []:
         out.append(
             {
-                "date": b.date.isoformat()
-                if getattr(b, "date", None) is not None
-                else None,
+                "date": b.date.isoformat() if getattr(b, "date", None) is not None else None,
                 "open": float(b.open),
                 "high": float(b.high),
                 "low": float(b.low),
@@ -287,6 +308,52 @@ async def get_history(
     if not out:
         body["note"] = "no history available for this symbol/window"
     return body
+
+
+@router.get("/stocks/{symbol}/intraday")
+async def get_intraday(
+    symbol: str,
+    interval: str = Query("5m", pattern="^(1m|5m|15m)$"),
+) -> dict[str, Any]:
+    """Latest session intraday bars (incl. extended hours) + running VWAP."""
+    from app.core.market_calendar import group_by_et_day
+    from app.jobs.monitor.live import _is_regular
+
+    sym = symbol.strip().upper()
+    if not sym:
+        raise HTTPException(status_code=400, detail="empty symbol")
+    try:
+        bars = await asyncio.wait_for(
+            _bars_provider().get_bars(sym, interval, start=datetime.now(UTC) - timedelta(days=5)),
+            timeout=25,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"intraday failed: {exc}") from exc
+    by_day = group_by_et_day(list(bars or []))
+    if not by_day:
+        return {"symbol": sym, "interval": interval, "bars": [], "note": "no intraday data"}
+    day = max(by_day)
+    out: list[dict[str, Any]] = []
+    num = den = 0.0
+    for b in by_day[day]:
+        regular = _is_regular(b.timestamp)
+        vol = float(b.volume or 0)
+        if regular and vol > 0:
+            num += (float(b.high) + float(b.low) + float(b.close)) / 3 * vol
+            den += vol
+        out.append(
+            {
+                "ts": b.timestamp.isoformat(),
+                "open": float(b.open),
+                "high": float(b.high),
+                "low": float(b.low),
+                "close": float(b.close),
+                "volume": int(b.volume),
+                "regular": regular,
+                "vwap": round(num / den, 6) if den > 0 else None,
+            }
+        )
+    return {"symbol": sym, "interval": interval, "session": day.isoformat(), "bars": out}
 
 
 @router.get("/universe")

@@ -150,7 +150,7 @@ class YFinanceMarketDataProvider(BaseMarketDataProvider):
 
     async def health_check(self) -> bool:
         try:
-            import yfinance  # type: ignore[import-not-found]
+            import yfinance
 
             hist = await asyncio.to_thread(lambda: yfinance.Ticker("AAPL").history(period="1d"))
             return not hist.empty
