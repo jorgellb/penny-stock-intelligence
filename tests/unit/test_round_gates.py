@@ -64,9 +64,7 @@ def test_apply_breadth_cap_keeps_best_scores() -> None:
 
 
 def test_apply_exit_rules_take_profit() -> None:
-    event = SignalEvent(
-        symbol="AAA", action=SignalAction.HOLD, price=2.0, score=50, reasons=[]
-    )
+    event = SignalEvent(symbol="AAA", action=SignalAction.HOLD, price=2.0, score=50, reasons=[])
     evaluated = [(event, {})]
     cfg = SimpleNamespace(sell_take_profit_pct=10.0, sell_stop_loss_pct=None)
     apply_exit_rules(evaluated, cfg, lambda _s: 12.0)

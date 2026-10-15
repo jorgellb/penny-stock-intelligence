@@ -264,18 +264,14 @@ async def get_history(
         raise HTTPException(status_code=400, detail="empty symbol")
     start = datetime.now(UTC) - timedelta(days=days)
     try:
-        bars = await asyncio.wait_for(
-            _bars_provider().get_daily_bars(sym, start=start), timeout=25
-        )
+        bars = await asyncio.wait_for(_bars_provider().get_daily_bars(sym, start=start), timeout=25)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"history failed: {exc}") from exc
     out = []
     for b in bars or []:
         out.append(
             {
-                "date": b.date.isoformat()
-                if getattr(b, "date", None) is not None
-                else None,
+                "date": b.date.isoformat() if getattr(b, "date", None) is not None else None,
                 "open": float(b.open),
                 "high": float(b.high),
                 "low": float(b.low),

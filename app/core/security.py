@@ -102,9 +102,7 @@ def _extract_client_key(request: Request, settings: Settings) -> str:
 class APIKeyMiddleware(BaseHTTPMiddleware):
     """Enforce ``X-API-Key`` on /api routes when auth is required."""
 
-    async def dispatch(
-        self, request: Request, call_next: Callable[[Request], Any]
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: Callable[[Request], Any]) -> Response:
         if request.method == "OPTIONS":
             return await call_next(request)  # type: ignore[no-any-return]
 

@@ -59,9 +59,7 @@ def test_accumulation_markup_setup() -> None:
 
 def test_squeeze_continuation_setup() -> None:
     cfg = MonitorConfig(setups=_only(squeeze_continuation=True))
-    match = best_setup(
-        _base(score=66, squeeze_active=True, rvol=3.0, vwap_distance_pct=1.0), cfg
-    )
+    match = best_setup(_base(score=66, squeeze_active=True, rvol=3.0, vwap_distance_pct=1.0), cfg)
     assert match is not None
     assert match.name == "squeeze_continuation"
 

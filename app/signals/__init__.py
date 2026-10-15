@@ -77,9 +77,7 @@ class SignalEvent:
             SignalAction.HOLD: "HOLD",
         }[self.action]
         setup_bit = f" [{self.setup}]" if self.setup else ""
-        lines = [
-            f"{head}: {self.symbol} @ ${self.price:.2f} (score {self.score}){setup_bit}"
-        ]
+        lines = [f"{head}: {self.symbol} @ ${self.price:.2f} (score {self.score}){setup_bit}"]
         lines.extend(f"- {r}" for r in self.reasons)
         lines.append("Señal automática para revisión manual, no es recomendación.")
         return "\n".join(lines)

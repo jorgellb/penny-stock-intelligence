@@ -147,9 +147,7 @@ def test_missing_api_key_returns_401_when_required(
     assert "api key" in r.json()["detail"].lower()
 
 
-def test_wrong_api_key_returns_401(
-    settings_factory: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_wrong_api_key_returns_401(settings_factory: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     s = settings_factory(
         environment="production",
         api_key="expected-key",
@@ -220,9 +218,7 @@ def test_cors_preflight_rejects_unknown_origin_in_production(
     assert r.headers.get("access-control-allow-origin") != "https://evil.example.com"
 
 
-def test_monitor_run_rate_limited(
-    settings_factory: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_monitor_run_rate_limited(settings_factory: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     from app.core import security as sec_mod
 
     sec_mod.reset_monitor_run_limiter()

@@ -73,9 +73,7 @@ def apply_regime_gate(
             continue
         if regime == MarketRegime.HALT_STORM:
             event.action = SignalAction.HOLD
-            event.reasons = [
-                "régimen HALT_STORM: cero compras nuevas, solo exits"
-            ] + event.reasons
+            event.reasons = ["régimen HALT_STORM: cero compras nuevas, solo exits"] + event.reasons
         elif (
             event.score < thresholds["min_score"]
             or float(details.get("rvol", 0.0)) < thresholds["min_rvol"]
@@ -95,9 +93,7 @@ def apply_correlation_gate(
     if not monitor_cfg.correlation_enabled:
         return []
     cands = [
-        {"symbol": e.symbol, "score": e.score}
-        for e, _ in evaluated
-        if e.action == SignalAction.BUY
+        {"symbol": e.symbol, "score": e.score} for e, _ in evaluated if e.action == SignalAction.BUY
     ]
     if len(cands) <= 1:
         return []

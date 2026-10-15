@@ -347,9 +347,7 @@ class MonitorService:
         feed_max_lag = get_settings().feed.max_fetch_lag_ms
         feed_lag_stale = self.last_feed_lag_ms > feed_max_lag
 
-        bars = await provider.get_daily_bars(
-            symbol, start=datetime.now(UTC) - timedelta(days=400)
-        )
+        bars = await provider.get_daily_bars(symbol, start=datetime.now(UTC) - timedelta(days=400))
         closes = np.array([float(b.close) for b in bars], dtype=float) if bars else np.array([])
         volumes = np.array([b.volume for b in bars], dtype=float) if bars else np.array([])
         if len(closes) >= 2 and closes[-2]:
@@ -557,9 +555,7 @@ class MonitorService:
                 rvol_source = st_src
         score_rvol = same_time_rvol if same_time_rvol is not None else rvol
 
-        cat_strength = map_catalyst_strength(
-            (catalyst or {}).get("impact") if catalyst else None
-        )
+        cat_strength = map_catalyst_strength((catalyst or {}).get("impact") if catalyst else None)
         fund_score = fundamentals_health_score(fundamentals)
         dq_score = data_quality_from_completeness(
             assessment.data_completeness,
@@ -808,9 +804,7 @@ class MonitorService:
         await asyncio.gather(*(_one(s) for s in symbols[: monitor_cfg.max_symbols]))
 
         # ---- Round gates: regime -> correlation (circuits stay inline; async alerts)
-        regime, thresholds = compute_regime(
-            evaluated, monitor_cfg, self.halts.halts_today
-        )
+        regime, thresholds = compute_regime(evaluated, monitor_cfg, self.halts.halts_today)
         self.last_regime = regime.value
         self.last_regime_thresholds = thresholds
         apply_regime_gate(evaluated, regime, thresholds, monitor_cfg.regime_enabled)

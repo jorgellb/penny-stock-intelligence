@@ -65,8 +65,10 @@ def rank_opportunities(
             continue
         proxy = row.get("score_proxy")
         try:
-            score_proxy = float(proxy) if proxy is not None else min(
-                100.0, max(0.0, change * 4.0 + rvol * 12.0)
+            score_proxy = (
+                float(proxy)
+                if proxy is not None
+                else min(100.0, max(0.0, change * 4.0 + rvol * 12.0))
             )
         except (TypeError, ValueError):
             score_proxy = min(100.0, max(0.0, change * 4.0 + rvol * 12.0))
