@@ -1,0 +1,35 @@
+"""Feature store schema for future ML."""
+
+FEATURE_COLUMNS = [
+    "symbol",
+    "timestamp",
+    "price",
+    "change_pct",
+    "gap_pct",
+    "volume",
+    "rvol",
+    "dollar_volume",
+    "rsi14",
+    "atr_pct",
+    "vwap_distance",
+    "ema9_distance",
+    "ema20_distance",
+    "float",
+    "market_cap",
+    "shares_outstanding",
+    "news_count_24h",
+    "catalyst_strength",
+    "news_sentiment",
+    "offering_recent",
+    "reverse_split_recent",
+    "dilution_pct",
+    "score",
+]
+FUTURE_TARGETS = [
+    "future_return_5m",
+    "future_return_15m",
+    "future_return_30m",
+    "future_return_60m",
+    "future_max_return_60m",
+    "future_max_drawdown_60m",
+]

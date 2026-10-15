@@ -1,0 +1,115 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: penny-stocks-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-penny_stocks}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro,z
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - penny-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: penny-stocks-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - penny-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: penny-stocks-backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      API_KEY: ${API_KEY}
+    env_file:
+      - .env
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app:ro,z
+      - ./config:/app/config:ro,z
+      - ./logs:/app/logs:z
+    networks:
+      - penny-network
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dashboard
+    container_name: penny-stocks-dashboard
+    environment:
+      API_BASE_URL: ${API_BASE_URL:-http://backend:8000}
+      API_KEY: ${API_KEY}
+    env_file:
+      - .env
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    depends_on:
+      - backend
+    volumes:
+      - ./dashboard:/app/dashboard:ro,z
+    networks:
+      - penny-network
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    container_name: penny-stocks-worker
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      API_KEY: ${API_KEY}
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app:ro,z
+      - ./config:/app/config:ro,z
+      - ./logs:/app/logs:z
+    networks:
+      - penny-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  penny-network:
+    driver: bridge

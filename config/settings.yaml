@@ -1,0 +1,263 @@
+universe:
+  country: "US"
+  min_price: 0.10
+  max_price: 5.00
+  exchanges:
+    - "NASDAQ"
+    - "NYSE"
+    - "AMEX"
+  include_otc: false
+  exclude_etfs: true
+  exclude_preferred: true
+  exclude_warrants: true
+  exclude_spac_units: true
+  exclude_funds: true
+
+liquidity:
+  min_avg_daily_volume: 500000
+  min_daily_dollar_volume: 1000000
+  max_spread_pct: 5.0
+  min_float: 1000000
+
+market:
+  premarket_enabled: true
+  afterhours_enabled: false
+  timezone: "America/New_York"
+
+scanner:
+  refresh_seconds: 60
+  premarket_refresh_seconds: 30
+  intraday_refresh_seconds: 15
+  max_symbols_per_batch: 100
+  request_timeout_seconds: 10
+  max_concurrent_requests: 10
+
+alerts:
+  minimum_score: 70
+  cooldown_minutes: 20
+  score_change_realert: 10
+  enabled_providers:
+    - "console"
+    - "telegram"
+
+monitor:
+  enabled: true
+  interval_seconds: 60
+  buy_min_score: 70
+  buy_min_rvol: 2.0
+  buy_require_above_vwap: true
+  buy_max_spread_pct: 5.0
+  sell_score_drop: 15
+  sell_vwap_break_pct: 3.0
+  block_flags:
+    - "TRADING_HALT"
+    - "RECENT_OFFERING"
+    - "ACTIVE_ATM"
+    - "DELISTING_WARNING"
+    - "GOING_CONCERN"
+  max_symbols: 200
+  # --- Advanced entry gates (opt-in; commented = off = current behavior) ---
+  # buy_min_dollar_volume: 500000.0
+  # buy_min_change_pct: 2.0
+  # buy_require_catalyst: true
+  # --- Advanced exits on open paper positions (commented = off) ---
+  # sell_take_profit_pct: 15.0
+  # sell_stop_loss_pct: 8.0
+  # --- Breadth cap: max new BUYs per round, best score first ---
+  # max_buys_per_round: 3
+  regime_enabled: true
+  halt_storm_threshold: 10
+  # Regime BUY thresholds (CHOP / RISK_OFF harden gates; HALT_STORM = exits only)
+  regime_chop_min_score: 80.0
+  regime_chop_min_rvol: 4.0
+  regime_riskoff_min_score: 80.0
+  regime_riskoff_min_rvol: 4.0
+  correlation_enabled: true
+  max_corr: 0.85
+  circuit_enabled: true
+  # Multi-setup playbooks (all on = max opportunity coverage)
+  setups:
+    momentum_vwap: true
+    gap_and_go: true
+    donchian_breakout: true
+    accumulation_markup: true
+    squeeze_continuation: true
+    catalyst_impulse: true
+  gap_min_change_pct: 5.0
+  gap_min_score: 60
+  gap_min_rvol: 2.0
+  donchian_min_score: 65
+  markup_min_score: 65
+  markup_min_rvol: 1.5
+  squeeze_min_score: 65
+  squeeze_min_rvol: 2.0
+  catalyst_min_score: 60
+  catalyst_min_rvol: 2.5
+  catalyst_setup_min_confidence: 0.6
+  radar_enabled: true
+  radar_list_name: "radar"
+  radar_max_symbols: 40
+  radar_min_score: 55
+  radar_min_rvol: 1.5
+  radar_min_change_pct: 2.0
+
+sizing:
+  risk_per_trade_pct: 0.005
+  high_score_bonus_pct: 0.01
+  high_score_threshold: 85
+  atr_multiple: 1.5
+  max_volume_participation: 0.05
+  max_float_participation: 0.10
+  paper_equity: 10000.0
+
+circuit:
+  symbol_max_loss_pct: 8.0
+  strategy_max_daily_loss_pct: 3.0
+  portfolio_max_daily_loss_pct: 5.0
+  max_halts_per_day: 3
+
+execution:
+  limit_only: true
+  default_venue: "ARCA"
+  urgency_offset_bps: 10
+  allowed_venues:
+    - "ARCA"
+    - "BATS"
+    - "EDGX"
+
+feed:
+  kind: "sip"
+  max_fetch_lag_ms: 1500
+  direct_entitlement: null
+
+gates:
+  donchian_min_rvol: 3.0
+  donchian_chop_rvol: 4.0
+  catalyst_min_confidence: 0.8
+  catalyst_max_age_hours: 24.0
+  max_spread_pct: 2.0
+  min_dollar_volume: 2000000.0
+  max_short_interest_pct: 20.0
+  max_borrow_rate_pct: 10.0
+
+risk:
+  exclude_recent_reverse_split: false
+  penalize_offerings: true
+  penalize_atm: true
+  penalize_shelf_registration: true
+  penalize_warrant_overhang: true
+  penalize_convertible_debt: true
+  penalize_dilution: true
+  penalize_low_liquidity: true
+  penalize_wide_spread: true
+  reverse_split_lookback_days: 90
+  offering_lookback_days: 30
+  dilution_threshold_pct: 10.0
+  low_float_max: 20000000
+  micro_float_max: 5000000
+
+float:
+  micro_float_max: 5000000
+  low_float_max: 20000000
+
+scoring:
+  weights:
+    momentum: 20
+    volume: 20
+    catalyst: 20
+    technical: 15
+    liquidity: 10
+    fundamentals: 10
+    data_quality: 5
+  penalties:
+    recent_offering: 20
+    active_atm: 20
+    reverse_split: 10
+    low_liquidity: 25
+    wide_spread: 15
+    dilution: 25
+    shelf_registration: 15
+    warrant_overhang: 10
+    convertible_debt: 10
+    going_concern: 30
+    delisting_warning: 30
+    negative_working_capital: 15
+    low_cash_runway: 15
+    trading_halt: 50
+    no_recent_filings: 10
+    insufficient_data: 20
+    news_unverified: 5
+
+providers:
+  market_data:
+    primary: "yfinance"
+    fallback: "alpha_vantage"
+    cache_ttl_seconds:
+      quotes: 5
+      bars: 60
+      daily_bars: 3600
+  fundamentals:
+    primary: "yfinance"
+    fallback: "alpha_vantage"
+    cache_ttl_seconds: 3600
+  news:
+    primary: "finnhub"
+    fallback: "alpha_vantage"
+    cache_ttl_seconds: 300
+  sec:
+    primary: "sec_edgar"
+    cache_ttl_seconds: 3600
+  ai:
+    primary: "openai"
+    fallback: "anthropic"
+    model: "gpt-4o-mini"
+    max_tokens: 1000
+    temperature: 0.1
+
+scheduler:
+  jobs:
+    sync_universe: "0 6 * * 1-5"
+    sync_daily_history: "0 7 * * 1-5"
+    sync_fundamentals: "0 8 * * 1-5"
+    sync_filings: "*/30 * * * 1-5"
+    sync_filings_fast: "*/5 * * * 1-5"
+    sync_news: "*/15 * * * 1-5"
+    premarket_scan: "*/5 4-9 * * 1-5"
+    intraday_scan: "*/2 9-16 * * 1-5"
+    radar: "*/3 4-16 * * 1-5"
+    risk_refresh: "0 * * * 1-5"
+    alert_dispatch: "*/1 * * * 1-5"
+    data_cleanup: "0 2 * * *"
+
+backtesting:
+  default_commission_pct: 0.001
+  default_slippage_pct: 0.01
+  min_liquidity_for_execution: 500000
+  default_spread_threshold_pct: 3.0
+  default_spread_penalty_pct: 0.01
+
+cache:
+  redis_url: "redis://localhost:6379/0"
+  default_ttl_seconds: 300
+
+logging:
+  level: "INFO"
+  format: "json"
+  file: "logs/app.log"
+
+database:
+  pool_size: 10
+  max_overflow: 20
+  pool_timeout: 30
+
+security:
+  api_key_header: "X-API-Key"
+  # null = auto (required when ENVIRONMENT=production|staging)
+  require_api_key: null
+  cors_origins:
+    - "http://localhost:8501"
+    - "http://127.0.0.1:8501"
+  cors_allow_credentials: true
+  rate_limit_requests: 100
+  rate_limit_window_seconds: 60
+  monitor_run_rate_limit: 10

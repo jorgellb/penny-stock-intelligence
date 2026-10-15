@@ -1,0 +1,28 @@
+# Local overrides with documented defaults for first-time setup.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# Prefer copying .env.example → .env and setting real secrets before
+# using the production compose file alone.
+
+services:
+  postgres:
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-penny}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-penny-dev-only-change-me}
+      POSTGRES_DB: ${POSTGRES_DB:-penny_stocks}
+
+  backend:
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://penny:penny-dev-only-change-me@postgres:5432/penny_stocks}
+      API_KEY: ${API_KEY:-dev-api-key-change-me}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+
+  dashboard:
+    environment:
+      API_KEY: ${API_KEY:-dev-api-key-change-me}
+
+  worker:
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://penny:penny-dev-only-change-me@postgres:5432/penny_stocks}
+      API_KEY: ${API_KEY:-dev-api-key-change-me}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
