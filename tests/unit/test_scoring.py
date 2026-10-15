@@ -270,7 +270,8 @@ class TestScoringConfig:
         assert data_quality_from_completeness(0.25) == 25.0
         assert data_quality_from_completeness(0.5, feed_lag_stale=True) == 35.0
 
-    def test_float_flags_penalized(self):
+    def test_float_flags_use_dedicated_penalties(self):
+        """Low float fuels runners: only micro float carries a small penalty."""
         engine = ScoringEngine()
         flags = [
             RiskFlag(
@@ -291,5 +292,6 @@ class TestScoringConfig:
             ),
         ]
         penalties = engine.compute_risk_penalties(flags)
-        assert penalties["MICRO_FLOAT"] == engine.penalties.low_liquidity
-        assert penalties["LOW_FLOAT"] == max(5, engine.penalties.low_liquidity // 2)
+        assert penalties["MICRO_FLOAT"] == engine.penalties.micro_float
+        assert engine.penalties.micro_float < engine.penalties.low_liquidity
+        assert "LOW_FLOAT" not in penalties  # 0 penalty by default

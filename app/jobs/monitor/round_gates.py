@@ -73,9 +73,7 @@ def apply_regime_gate(
             continue
         if regime == MarketRegime.HALT_STORM:
             event.action = SignalAction.HOLD
-            event.reasons = [
-                "régimen HALT_STORM: cero compras nuevas, solo exits"
-            ] + event.reasons
+            event.reasons = ["régimen HALT_STORM: cero compras nuevas, solo exits"] + event.reasons
         elif (
             event.score < thresholds["min_score"]
             or float(details.get("rvol", 0.0)) < thresholds["min_rvol"]
@@ -95,9 +93,7 @@ def apply_correlation_gate(
     if not monitor_cfg.correlation_enabled:
         return []
     cands = [
-        {"symbol": e.symbol, "score": e.score}
-        for e, _ in evaluated
-        if e.action == SignalAction.BUY
+        {"symbol": e.symbol, "score": e.score} for e, _ in evaluated if e.action == SignalAction.BUY
     ]
     if len(cands) <= 1:
         return []
@@ -153,6 +149,42 @@ def apply_exit_rules(
             event.reasons = [
                 f"stop-loss: posición {pnl:+.2f}% <= -{abs(stop_loss):.2f}%"
             ] + event.reasons
+
+
+def apply_plan_exits(
+    evaluated: list[tuple[SignalEvent, dict[str, Any]]],
+    paper: Any,
+) -> None:
+    """Manage open paper positions with their trade plan.
+
+    - price <= plan stop → SELL (stop)
+    - price >= final target → SELL (take profit)
+    - price >= T1 → stop raised to break-even (free trade), never lowered
+    Positions restored from DB without a plan are left to the config rules.
+    """
+    for event, _details in evaluated:
+        pos = paper.positions.get(event.symbol.upper())
+        if pos is None or getattr(pos, "stop", None) is None:
+            continue
+        px = event.price
+        if px <= 0:
+            continue
+        if event.action == SignalAction.SELL:
+            continue
+        if pos.target is not None and px >= pos.target:
+            event.action = SignalAction.SELL
+            event.reasons = [f"objetivo del plan alcanzado (${pos.target:.4g})"] + event.reasons
+        elif px <= pos.stop:
+            kind = "break-even" if pos.stop >= pos.entry_price * 0.999 else "stop del plan"
+            event.action = SignalAction.SELL
+            event.reasons = [f"{kind} tocado (${pos.stop:.4g})"] + event.reasons
+        elif (
+            pos.breakeven_after is not None
+            and px >= pos.breakeven_after
+            and pos.stop < pos.entry_price
+        ):
+            pos.stop = pos.entry_price
+            event.reasons.append(f"T1 alcanzado: stop subido a break-even ${pos.entry_price:.4g}")
 
 
 def apply_breadth_cap(

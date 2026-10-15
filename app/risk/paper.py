@@ -28,6 +28,11 @@ class PaperPosition:
     entry_price: float  # all-in (costs included)
     entry_time: datetime
     last_price: float = 0.0
+    # Trade-plan management (in memory; restored positions fall back to
+    # the configured take-profit / stop-loss rules).
+    stop: float | None = None
+    target: float | None = None
+    breakeven_after: float | None = None
 
     @property
     def market_value(self) -> float:
@@ -97,8 +102,13 @@ class PaperTracker:
         shares: int | None = None,
         spread_pct: float | None = None,
         now: datetime | None = None,
+        plan: dict | None = None,
     ) -> PaperPosition | None:
-        """Open a paper position. None when one is already open (no pyramid)."""
+        """Open a paper position. None when one is already open (no pyramid).
+
+        `plan` (TradePlan.as_dict()) attaches stop / final target /
+        break-even trigger so exits follow the plan, not a fixed %.
+        """
         now = now or datetime.now(UTC)
         self._roll_day(now)
         sym = symbol.upper()
@@ -109,6 +119,13 @@ class PaperTracker:
         pos = PaperPosition(
             symbol=sym, shares=qty, entry_price=entry, entry_time=now, last_price=price
         )
+        if plan:
+            targets = plan.get("targets") or []
+            pos.stop = float(plan["stop"]) if plan.get("stop") else None
+            pos.target = float(targets[1]) if len(targets) >= 2 else None
+            pos.breakeven_after = (
+                float(plan["breakeven_after"]) if plan.get("breakeven_after") else None
+            )
         self.positions[sym] = pos
         return pos
 
@@ -163,10 +180,17 @@ class PaperTracker:
                     "entry": round(p.entry_price, 4),
                     "last": round(p.last_price, 4),
                     "unrealized_pct": round(p.unrealized_pct, 2),
+                    "stop": round(p.stop, 4) if p.stop is not None else None,
+                    "target": round(p.target, 4) if p.target is not None else None,
                 }
                 for s, p in self.positions.items()
             },
             "closed_trades": len(self.closed),
+            "win_rate": round(
+                sum(1 for t in self.closed if t.pnl_dollars > 0) / len(self.closed) * 100, 1
+            )
+            if self.closed
+            else None,
             "realized_today": round(self.realized_today, 2),
             "daily_pnl_pct": round(self.daily_pnl_pct, 2),
         }

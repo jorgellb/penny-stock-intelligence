@@ -23,18 +23,38 @@ def sma(values: np.ndarray, period: int) -> np.ndarray:
     return np.asarray(pd.Series(values).rolling(window=period).mean().values)
 
 
+def wilder_smooth(values: np.ndarray, period: int) -> np.ndarray:
+    """Wilder's moving average (RMA), seeded with the first `period` SMA.
+
+    This is the smoothing used by the reference RSI/ATR/ADX definitions
+    (and by every charting platform), unlike a plain rolling mean.
+    """
+    values = np.asarray(values, dtype=float)
+    out = np.full(len(values), np.nan)
+    if len(values) < period:
+        return out
+    out[period - 1] = float(np.mean(values[:period]))
+    for i in range(period, len(values)):
+        out[i] = (out[i - 1] * (period - 1) + values[i]) / period
+    return out
+
+
 def rsi(values: np.ndarray, period: int = 14) -> np.ndarray:
-    """Relative Strength Index."""
+    """Relative Strength Index (Wilder smoothing)."""
     if len(values) < period + 1:
         return np.full(len(values), np.nan)
-    deltas = np.diff(values)
-    gains = np.where(deltas > 0, deltas, 0)
-    losses = np.where(deltas < 0, -deltas, 0)
-    avg_gain = np.asarray(pd.Series(gains).rolling(window=period).mean().values)
-    avg_loss = np.asarray(pd.Series(losses).rolling(window=period).mean().values)
+    deltas = np.diff(np.asarray(values, dtype=float))
+    gains = np.where(deltas > 0, deltas, 0.0)
+    losses = np.where(deltas < 0, -deltas, 0.0)
+    avg_gain = wilder_smooth(gains, period)
+    avg_loss = wilder_smooth(losses, period)
     with np.errstate(divide="ignore", invalid="ignore"):
-        rs = np.where(avg_loss == 0, 100, avg_gain / avg_loss)
+        rs = avg_gain / avg_loss
         rsi_values = 100 - (100 / (1 + rs))
+    # No losses in the window: RSI is 100 (or neutral 50 on a flat series).
+    flat = (avg_loss == 0) & ~np.isnan(avg_loss)
+    rsi_values = np.where(flat & (avg_gain > 0), 100.0, rsi_values)
+    rsi_values = np.where(flat & (avg_gain == 0), 50.0, rsi_values)
     result = np.full(len(values), np.nan)
     result[1:] = rsi_values
     return result
@@ -60,20 +80,24 @@ def macd(
     return macd_line, signal_line, histogram
 
 
+def true_range(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> np.ndarray:
+    """True range per bar (first bar uses its own high-low)."""
+    highs = np.asarray(highs, dtype=float)
+    lows = np.asarray(lows, dtype=float)
+    closes = np.asarray(closes, dtype=float)
+    prev_close = np.roll(closes, 1)
+    if len(closes):
+        prev_close[0] = closes[0]
+    return np.asarray(
+        np.maximum.reduce([highs - lows, np.abs(highs - prev_close), np.abs(lows - prev_close)])
+    )
+
+
 def atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> np.ndarray:
-    """Average True Range."""
+    """Average True Range (Wilder smoothing)."""
     if len(closes) < period + 1:
         return np.full(len(closes), np.nan)
-    prev_close = np.roll(closes, 1)
-    prev_close[0] = closes[0]
-    tr = np.maximum.reduce(
-        [
-            highs - lows,
-            np.abs(highs - prev_close),
-            np.abs(lows - prev_close),
-        ]
-    )
-    return np.asarray(pd.Series(tr).rolling(window=period).mean().values)
+    return wilder_smooth(true_range(highs, lows, closes), period)
 
 
 def vwap(bars: pd.DataFrame) -> pd.Series | None:
@@ -126,28 +150,28 @@ def bollinger_bands(
 def adx(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14
 ) -> np.ndarray | None:
-    """Average Directional Index."""
-    if len(closes) < period + 15:
-        return np.full(len(closes), np.nan)
-    plus_dm = np.diff(highs)
-    minus_dm = -np.diff(lows)
-    plus_dm = np.where((plus_dm > minus_dm) & (plus_dm > 0), plus_dm, 0)
-    minus_dm = np.where((minus_dm > plus_dm) & (minus_dm > 0), minus_dm, 0)
-    atr_values = atr(highs, lows, closes, period)
-    plus_di = (
-        100
-        * pd.Series(plus_dm).ewm(alpha=1 / period).mean()
-        / pd.Series(atr_values).ewm(alpha=1 / period).mean()
-    )
-    minus_di = (
-        100
-        * pd.Series(minus_dm).ewm(alpha=1 / period).mean()
-        / pd.Series(atr_values).ewm(alpha=1 / period).mean()
-    )
-    dx = 100 * np.abs(plus_di.values - minus_di.values) / (plus_di.values + minus_di.values)
-    adx_values = pd.Series(dx).ewm(alpha=1 / period).mean().values
-    result = np.full(len(closes), np.nan)
-    result[period * 2 :] = adx_values[period * 2 :]
+    """Average Directional Index (Wilder), aligned bar-for-bar with closes."""
+    n = len(closes)
+    if n < period * 2 + 1:
+        return np.full(n, np.nan)
+    highs = np.asarray(highs, dtype=float)
+    lows = np.asarray(lows, dtype=float)
+    up = np.diff(highs)
+    down = -np.diff(lows)
+    plus_dm = np.where((up > down) & (up > 0), up, 0.0)
+    minus_dm = np.where((down > up) & (down > 0), down, 0.0)
+    tr = true_range(highs, lows, closes)[1:]  # same length/alignment as the DMs
+    tr_s = wilder_smooth(tr, period)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        plus_di = 100 * wilder_smooth(plus_dm, period) / tr_s
+        minus_di = 100 * wilder_smooth(minus_dm, period) / tr_s
+        denom = plus_di + minus_di
+        dx = np.where(denom > 0, 100 * np.abs(plus_di - minus_di) / denom, 0.0)
+    first = period - 1
+    adx_core = np.full(len(dx), np.nan)
+    adx_core[first:] = wilder_smooth(dx[first:], period)
+    result = np.full(n, np.nan)
+    result[1:] = adx_core
     return result
 
 
@@ -181,7 +205,40 @@ def roc(values: np.ndarray, period: int = 10) -> np.ndarray:
     """Rate of Change."""
     if len(values) < period + 1:
         return np.full(len(values), np.nan)
-    return np.asarray(((values - np.roll(values, period)) / np.roll(values, period)) * 100)
+    values = np.asarray(values, dtype=float)
+    out = np.full(len(values), np.nan)
+    base = values[:-period]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out[period:] = np.where(base != 0, (values[period:] - base) / base * 100, np.nan)
+    return out
+
+
+def pct_from_high(closes: np.ndarray, highs: np.ndarray, window: int) -> float | None:
+    """% distance of the last close below the highest high of the prior window.
+
+    0 means at/above the high (breakout territory); 25 means 25% below.
+    """
+    if len(highs) < window + 1 or len(closes) == 0:
+        return None
+    ref = float(np.nanmax(highs[-window - 1 : -1]))
+    if ref <= 0:
+        return None
+    return max(0.0, (ref - float(closes[-1])) / ref * 100)
+
+
+def bb_width_percentile(values: np.ndarray, period: int = 20, lookback: int = 120) -> float | None:
+    """Percentile (0-100) of today's Bollinger bandwidth vs its own history.
+
+    Low values = volatility contraction (coiled spring before expansion).
+    """
+    if len(values) < period + 10:
+        return None
+    _, _, bw = bollinger_bands(values, period)
+    bw = np.asarray(bw, dtype=float)
+    hist = bw[~np.isnan(bw)][-lookback:]
+    if len(hist) < 10:
+        return None
+    return float((hist < hist[-1]).mean() * 100)
 
 
 def gap_percent(previous_close: float, current_price: float) -> float:
