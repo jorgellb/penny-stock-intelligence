@@ -41,7 +41,7 @@ jobs:
         run: pytest tests/unit -q --tb=short
         env:
           ENVIRONMENT: test
-          DATABASE_URL: sqlite+aiosqlite:///:memory:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
           PAPER_MODE: "true"
           LIVE_TRADING: "false"
 
